@@ -1,0 +1,155 @@
+theory cest
+begin
+
+builtins: symmetric-encryption, hashing, signing, asymmetric-encryption
+
+rule sys_init[color=#feff25]:
+	[Fr(~ToE), Fr(~ltk_V),Fr(~ltk_C),Fr(~ltk_E)]  // <$rules, h(~ToE), pk(~ltk_V), pk(~ltk_C), pk(~ltk_E)>
+	--[OnlyOnceV($rules), Secret(~ToE)]->
+	[V0($V, <$rules, h(~ToE), pk(~ltk_V), pk(~ltk_C), pk(~ltk_E)>), !Pk($V, pk(~ltk_V)), !Ltk($V, ~ltk_V),
+	 E0($E, <$rules, h(~ToE), pk(~ltk_V), pk(~ltk_C), pk(~ltk_E)>), !Pk($E, pk(~ltk_E)), !Ltk($E, ~ltk_E),
+	 C0($C, <pk(~ltk_C)>), !Pk($C, pk(~ltk_C)), !Ltk($C, ~ltk_C)]  // , !Agreement($V,$E,$C, $rules)
+
+rule P1_Vendor_initial_request[color=#fdb7aa]:
+	[V0($V, <$rules, h(ToE), pk(ltk_V), pk(ltk_C), pk(ltk_E)>)]
+	--[R1($V)]->
+	[V1($V, <$rules, h(ToE), pk(ltk_V), pk(ltk_C), pk(ltk_E)>), Out(<'initialrequest', $V, $C, $rules, sign(<$V,$rules>, ltk_V)>) ]
+
+rule P1_CEST_accept_request[color=#e0e0e0]:
+	[C0($C, <pk(ltk_C)>), In(<'initialrequest',$V, $C, $rules, sign(<$V,$rules>, ltk_V)>), !Pk($V, pk(ltk_V))]
+	--[R2($C)]->
+	[C1($C, <$rules, pk(ltk_V), pk(ltk_C)>), Out(<'acceptrequest', $C, $V, $rules>) ]
+
+rule P1_Vendor_RA_request_core[color=#fdb7aa]:
+    [ V1($V, <$rules, h(ToE), pk(ltk_V), pk(ltk_C), pk(ltk_E)>), In(<'acceptrequest', $C, $V, $rules>) ]
+  --[ R3() ]->
+    [ V2($V, <$rules, h(ToE), pk(ltk_V), pk(ltk_C), pk(ltk_E)>), Out(<'RA_request',$C,$V, $rules, sign(<$V, $rules>, ltk_V)>) ]
+
+rule P1_Core_RA_reply_vendor[color=#ff4b5e]:
+    [ C1($C, <$rules, pk(ltk_V), pk(ltk_C)>), In(<'RA_request',$C,$V, $rules, sign(<$V, $rules>, ltk_V)>), !Ltk($C, ltk_C) ]
+  --[ R4(), Running($C, $V, <'VendorSecureChannelWithCore', $rules, ltk_C>) ]->
+    [ C2($C, <$rules, $V, pk(ltk_V), pk(ltk_C)>), Out(<'RA_reply',$C,$V, sign($rules, ltk_C)>) ]
+    // CORE ASSUMPTION HERE: Core cannot lie about the rules
+
+rule P1_Vendor_Send_data[color=#fdb7aa]:
+    [ V2($V, <$rules_agreed, h(~ToE), pk(ltk_V), pk(ltk_C), pk(ltk_E)>), In(<'RA_reply',$C,$V, sign($rules_attested, ltk_C)>), !Pk($C, pk(ltk_C)), Fr(~report_key_material1), Fr(~ToE_key)]
+  --[ R5(), RulesCheck($rules_agreed,$rules_attested), Commit($V, $C, <'VendorSecureChannelWithCore', $rules_agreed, ltk_C>) ]->
+    [ V3($V, <$rules_agreed, h(~ToE), pk(ltk_V), $C, pk(ltk_C), pk(ltk_E)>, <~ToE_key>), MessageR5(<'VendorSends', $V, $C, pk(ltk_E), h(~ToE), senc(~ToE, ~ToE_key), $rules_agreed, ~report_key_material1>) ]
+
+rule P1_Core_Send_upload_ID[color=#ff4b5e]:
+    [ C2($C, <$rules, $V, pk(ltk_V), pk(ltk_C)>),  MessageR5(<'VendorSends', $V, $C, pk(ltk_E), h(ToE), senc(ToE, ToE_key), $rules, report_key_material1>)]
+  --[ R6($uploadID) ]->
+    [ C3($C, <$rules, h(ToE), $V, pk(ltk_V), pk(ltk_C), pk(ltk_E)>, <h(ToE), senc(ToE, ToE_key), report_key_material1>), MessageR6(<'uploadId',$C,$V,h(ToE),$uploadID>) ]
+
+rule P1_Vendor_Get_uploadID[color=#fdb7aa]:
+    [V3($V, <$rules, h(ToE), pk(ltk_V), $C, pk(ltk_C), pk(ltk_E)>, <ToE_key>), MessageR6(<'uploadId',$C,$V,h(ToE),$uploadID>)]
+  --[R65()]->
+    [V4($V, <$rules, h(ToE), pk(ltk_V), $C, pk(ltk_C), pk(ltk_E)>, <ToE_key, $uploadID>)]
+
+rule P2_Evaluator_Start_tests[color=#fd96fd]:
+    [E0($E, <$rules, h(ToE), pk(ltk_V), pk(ltk_C), pk(ltk_E)>)]
+  --[R7()]->
+    [E1($E, <$rules, h(ToE), pk(ltk_V), pk(ltk_C), pk(ltk_E)>), Out(<'startTest', $E, $C, $rules, sign($rules, ltk_E)>)]
+
+rule P2_Core_Init_tools[color=#ff4b5e]:
+		[C3($C, <$rules, h(ToE), $V, pk(ltk_V), pk(ltk_C), pk(ltk_E)>, <h(ToE), senc(ToE, ToE_key), report_key_material1>),
+		 In(<'startTest', $E, $C, $rules, sign($rules, ltk_E)>), Fr(~ltk_T)]
+  --[R8(), Running($TT, $C, <'CoreSecureChannelWithTools', $TT, $rules, ~ltk_T>)]->
+    [C4($C, <$rules, h(ToE), $V, pk(ltk_V), pk(ltk_C), pk(ltk_E)>, <h(ToE), senc(ToE, ToE_key), report_key_material1, pk(~ltk_T)>),
+     T0($TT, <$rules, pk(~ltk_T), pk(ltk_C)>), Out(<'RA_reply2', $TT, $C, $rules, sign(<$TT, $rules>, ~ltk_T)>), !Pk($TT, pk(~ltk_T)), !Ltk($TT, ~ltk_T)]
+
+rule P2_Core_Send_ToE[color=#ff4b5e]:
+    [C4($C, <$rules_agreed, h(ToE), $V, pk(ltk_V), pk(ltk_C), pk(ltk_E)>, <h(ToE), senc(ToE, ToE_key), report_key_material1, pk(ltk_T)>),
+     In(<'RA_reply2', $TT, $C, $rules_attested, sign(<$TT, $rules_attested>, ltk_T)>)]
+  --[R9(), RulesCheck($rules_agreed,$rules_attested), Commit($C, $TT, <'CoreSecureChannelWithTools', $TT, $rules_attested, ltk_T>)]->
+    [C5($C, <$rules_agreed, h(ToE), $V, pk(ltk_V), pk(ltk_C), pk(ltk_E)>, <h(ToE), senc(ToE, ToE_key), report_key_material1, pk(ltk_T)>),
+     MessageR9(<'CoreSends', $C, $TT, $V, pk(ltk_V), h(ToE), senc(ToE, ToE_key)>)]
+
+rule P2_Test_Request_key[color=#f76e7c]:
+    [T0($TT, <$rules, pk(ltk_T), pk(ltk_C)>), MessageR9(<'CoreSends', $C, $TT, $V, pk(ltk_V), h(ToE), senc(ToE, ToE_key)>)]  //need to mention explicitly !PK($V,..  ??
+  --[R10(), Running($TT, $V, <'VendorSecureChannelWithTools', $TT, $rules, ltk_V, ltk_T>)]->  //
+    [T1($TT, <$rules, pk(ltk_T), pk(ltk_C)>, <$V, pk(ltk_V), h(ToE), senc(ToE, ToE_key)>),
+     Out(<'TestRequestKey',$TT,$V, h(ToE), sign(<$TT, $rules, pk(ltk_V)>, ltk_T)>)]  // TOCHECK: should be encrypted?
+
+rule P2_Vendor_Send_Key[color=#fdb7aa]:
+    [V4($V, <$rules_agreed, h(ToE), pk(ltk_V), $C, pk(ltk_C), pk(ltk_E)>, <ToE_key, $uploadID>),
+     In(<'TestRequestKey',$TT,$V, h(ToE), sign(<$TT, $rules_attested, pk(ltk_V)>, ltk_T)>), !Pk($TT, pk(ltk_T))]
+  --[R11(), RulesCheck($rules_agreed,$rules_attested), Commit($V, $TT, <'VendorSecureChannelWithTools', $TT, $rules_attested, ltk_V, ltk_T>)]->  //
+    [V5($V, <$rules_agreed, h(ToE), pk(ltk_V), $C, pk(ltk_C), pk(ltk_E)>, <ToE_key, $uploadID, pk(ltk_T)>),
+     Out(<'VendorSendsKey', $V, $TT, ToE_key>)]  // I don't like that
+
+rule P2_Test_Execute[color=#f76e7c]:
+    [T1($TT, <$rules, pk(ltk_T), pk(ltk_C)>, <$V, pk(ltk_V), h(ToE), senc(ToE, ToE_key)>),
+     In(<'VendorSendsKey', $V, $TT, ToE_key>), Fr(~test_data)]
+  --[R12(), Running($TT, $C, <'PartialReportFromProperTOE', h(ToE)>)]->
+    [MessageR12(<'TestSendsResult', $TT, $C, h(ToE), ~test_data>)] //No more Test $TT state, enclave can shutdown
+
+rule P2_Core_Aggreg_results[color=#ff4b5e]:
+    let
+    content = <$rules, h(ToE),  senc(test_data, report_key_material1) >
+    sig = sign(content, ltk_C)
+    full_report = <content, sig>
+    in
+    [C5($C, <$rules, h(ToE), $V, pk(ltk_V), pk(ltk_C), pk(ltk_E)>, <h(ToE), senc(ToE, ToE_key), report_key_material1, pk(ltk_T)>),
+     MessageR12(<'TestSendsResult', $TT, $C, h(ToE), test_data>)]
+  --[R13(), Commit($C, $TT, <'PartialReportFromProperTOE', h(ToE)>), Running($C, $V, <'FullReportFromProperTOE', h(ToE)>) ]->
+    [Out(<'CoreSendsFullReport', $C, $V, full_report>)]  // No more Core $C state, enclave can shut down
+
+rule P2_Vendor_Get_FullReport[color=#fdb7aa]:
+    let
+    content = <$rules, h(ToE),  senc(test_data, report_key_material1) >
+    sig = sign(content, ltk_C)
+    full_report = <content, sig>
+    in
+    [V5($V, <$rules, h(ToE), pk(ltk_V), $C, pk(ltk_C), pk(ltk_E)>, <ToE_key, $uploadID, pk(ltk_T)>),
+     In(<'CoreSendsFullReport', $C, $V, full_report>)]
+  --[R14(full_report), Secret(ToE), Secret(test_data), Commit($V, $C, <'FullReportFromProperTOE', h(ToE)>) ]->
+    [V6($V, <$rules, h(ToE), pk(ltk_V), pk(ltk_C), pk(ltk_E)>, <ToE_key, $uploadID, pk(ltk_T), full_report>)]
+/*
+rule P2_Evaluator_Get_InterimReport:
+    []
+  --[R15()]->
+    []
+*/
+
+restriction OnlyOnceV:
+  "All #i #j x. OnlyOnceV(x)@#i & OnlyOnceV(x)@#j ==> #i = #j"
+
+restriction rules_followed:
+  "∀ rules_attested rules_agreed #i.
+  (RulesCheck( rules_attested, rules_agreed ) @ #i)
+  ⇒(rules_attested = rules_agreed)"
+// This is a restriction and not a lemma because this represent an active action performed by the actor receiving the attestation.
+// The validity of the attestation is checked, and if the rules do not match, the actor stop/does not apply the transition rule.
+// As opposed to "true" lemmas, which model passive beliefs that we want to prove true.
+
+/*
+lemma L6:
+exists-trace
+"
+	Ex uID #i.
+		R6(uID) @ #i
+"
+*/
+
+lemma aliveness:
+exists-trace
+"
+	Ex full_report #i.
+		R14(full_report) @ #i
+"
+
+lemma secrecy:
+all-traces
+"
+  All x #i.
+    Secret(x) @i ==>
+      not (Ex #j. K(x)@j)
+"
+
+lemma noninjective_agreement:
+   all-traces
+   "∀ A B t #i.
+          (Commit( A, B, t ) @ #i) ⇒ (∃ #j. Running( B, A, t ) @ #j)"
+
+end
